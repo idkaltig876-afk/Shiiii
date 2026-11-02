@@ -1,8 +1,10 @@
 --[[
-    NullyHub Ultimate v3.0
-    Full Redz feature set (improved) + one-time killables + Auto Buy + Auto Bounty
-    Moving blackhole UI + blackhole watermark
-    Lower detection profile
+    NullyHub Ultimate v3.1
+    - Magnet: mobs forced under player (safe height)
+    - Smooth continuous hover (no bounce)
+    - LeftShift = toggle UI
+    - Farm + Fruit sections (Redz style, improved)
+    - Blackhole theme
 ]]
 
 if getgenv().NullyLoaded then return end
@@ -14,13 +16,9 @@ local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 local VirtualUser       = game:GetService("VirtualUser")
 local CoreGui           = game:GetService("CoreGui")
-local TeleportService   = game:GetService("TeleportService")
-local HttpService       = game:GetService("HttpService")
 local UserInputService  = game:GetService("UserInputService")
-local Lighting          = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera      = workspace.CurrentCamera
 
 -- Place detection
 getgenv().CheckPlaceId  = game.PlaceId == 100117331123089 and 100117331123089 or 7449423635
@@ -33,67 +31,67 @@ local ThreeWorld = game.PlaceId == getgenv().CheckPlaceId
 
 -- ===================== CONFIG =====================
 getgenv().Nully = {
-    -- Core Farm
+    -- Core
     AutoFarm          = false,
     AutoQuest         = true,
     AutoBoss          = false,
-    AutoElite         = false,
-    AutoSeaBeast      = false,
-    AutoShip          = false,
     Magnet            = true,
-    MagnetRadius      = 125,
-    FarmHeight        = 17,
-    FlySpeed          = 95,
+    MagnetUnderOffset = 12,     -- how far under the player the mobs sit
+    FarmHeight        = 16,     -- player hover height above mob
+    FlySpeed          = 110,
     IgnoreUnkillable  = true,
 
-    -- Combat / Aura
+    -- Combat
     AutoAttack        = true,
     AttackAura        = true,
-    AuraRadius        = 58,
+    AuraRadius        = 60,
     FastAttack        = true,
-    SelectWeapon      = "Melee", -- Melee / Sword / Fruit / Gun
+    SelectWeapon      = "Melee",
 
-    -- One-time specials
-    OneTimeKillables  = true,   -- button will force kill once
-    KilledOneTime     = {},     -- tracks already killed specials
+    -- One-time
+    OneTimeKillables  = true,
+    KilledOneTime     = {},
 
-    -- Auto Bounty
+    -- Bounty
     AutoBounty        = false,
-    BountyRadius      = 350,
+    BountyRadius      = 380,
 
-    -- Fruit / Buy
+    -- Fruit
     FruitNotifier     = false,
     AutoStoreFruit    = false,
     AutoBuyFruit      = false,
-    AutoBuyStyle      = false,
+    AutoSpinFruit     = false,
     SelectedFruit     = "Flame",
+
+    -- Buy / Style
+    AutoBuyStyle      = false,
     SelectedStyle     = "Electric",
 
-    -- Islands / Events
+    -- Events
+    AutoRaid          = false,
     AutoKitsune       = false,
     AutoPrehistoric   = false,
     AutoMirage        = false,
-    AutoRaid          = false,
-    AutoSpinFruit     = false,
 
     -- Visuals
     ESP = {Player = false, Mob = false, Boss = false, Fruit = false},
     NoClip            = true,
     AntiAFK           = true,
+
+    -- Internal
+    CurrentTarget     = nil,
+    HoverTargetCF     = nil,
 }
 
--- One-time specials (Prison + common island one-shots)
+-- One-time specials
 local OneTimeNames = {
     "Prisoner", "Escaping Prisoner", "Prison Escapee", "Escapee",
     "Sick Man", "Rich Son", "Detective", "Horned Man",
-    "Bartilo", "Trevor", "Swan", "Don Swan", "Indra",
-    "Citizen", "Awakened Boss", -- expand as needed
+    "Bartilo", "Trevor", "Swan", "Don Swan", "Indra", "Citizen"
 }
 
 -- ===================== UTILS =====================
-local function rand(min, max)
-    return min + math.random() * (max - min)
-end
+local function rand(a, b) return a + math.random() * (b - a) end
 
 local function GetChar() return LocalPlayer.Character end
 local function GetHRP()
@@ -121,38 +119,30 @@ end
 
 local function GetSelectedWeapon()
     local w = getgenv().Nully.SelectWeapon
-    local backpack = LocalPlayer.Backpack
+    local bp = LocalPlayer.Backpack
     if w == "Melee" then
-        for _, t in pairs(backpack:GetChildren()) do
+        for _, t in pairs(bp:GetChildren()) do
             if t:IsA("Tool") and not string.find(t.Name:lower(), "fruit") and not string.find(t.Name:lower(), "gun") then
                 return t.Name
             end
         end
         return "Combat"
     elseif w == "Sword" then
-        for _, t in pairs(backpack:GetChildren()) do
+        for _, t in pairs(bp:GetChildren()) do
             if t:IsA("Tool") and (string.find(t.Name:lower(), "sword") or string.find(t.Name:lower(), "katana") or string.find(t.Name:lower(), "blade") or string.find(t.Name:lower(), "scythe")) then
                 return t.Name
             end
         end
     elseif w == "Fruit" then
-        for _, t in pairs(backpack:GetChildren()) do
+        for _, t in pairs(bp:GetChildren()) do
             if t:IsA("Tool") and string.find(t.Name:lower(), "fruit") then return t.Name end
         end
     elseif w == "Gun" then
-        for _, t in pairs(backpack:GetChildren()) do
+        for _, t in pairs(bp:GetChildren()) do
             if t:IsA("Tool") and string.find(t.Name:lower(), "gun") then return t.Name end
         end
     end
     return "Combat"
-end
-
-local function SmoothTo(cf, speed)
-    local hrp = GetHRP()
-    if not hrp then return end
-    local dist = (hrp.Position - cf.Position).Magnitude
-    local t = math.clamp(dist / (speed or getgenv().Nully.FlySpeed), 0.11, 1.6)
-    TweenService:Create(hrp, TweenInfo.new(t + rand(-0.03, 0.05), Enum.EasingStyle.Linear), {CFrame = cf}):Play()
 end
 
 local function IsUnkillable(mob)
@@ -182,14 +172,58 @@ local function MarkKilled(mob)
     getgenv().Nully.KilledOneTime[key] = true
 end
 
-local function IsValidMob(m, allowOneTime)
-    if not m or not m:FindFirstChild("Humanoid") or not m:FindFirstChild("HumanoidRootPart") then return false end
-    if m.Humanoid.Health <= 0 then return false end
-    if allowOneTime then
-        if IsOneTime(m) and AlreadyKilled(m) then return false end
-        return true
+local function IsValidMob(m)
+    return m and m:FindFirstChild("Humanoid") and m:FindFirstChild("HumanoidRootPart")
+        and m.Humanoid.Health > 0 and not IsUnkillable(m)
+end
+
+-- ===================== IMPROVED MAGNET (UNDER YOU) =====================
+local function MagnetUnder(playerPos)
+    if not getgenv().Nully.Magnet then return end
+    local underY = playerPos.Y - getgenv().Nully.MagnetUnderOffset
+    for _, m in pairs(workspace.Enemies:GetChildren()) do
+        if IsValidMob(m) then
+            local dist = (Vector3.new(m.HumanoidRootPart.Position.X, playerPos.Y, m.HumanoidRootPart.Position.Z) - playerPos).Magnitude
+            if dist <= 140 then
+                pcall(function()
+                    if isnetworkowner and isnetworkowner(m.HumanoidRootPart) then
+                        -- force same X/Z as player, lower Y
+                        m.HumanoidRootPart.CFrame = CFrame.new(
+                            playerPos.X + rand(-0.8, 0.8),
+                            underY,
+                            playerPos.Z + rand(-0.8, 0.8)
+                        )
+                    end
+                end)
+            end
+        end
     end
-    return not IsUnkillable(m)
+end
+
+-- ===================== SMOOTH HOVER (NO BOUNCE) =====================
+local hoverConn
+local function StartSmoothHover()
+    if hoverConn then hoverConn:Disconnect() end
+    hoverConn = RunService.Heartbeat:Connect(function(dt)
+        if not getgenv().Nully.AutoFarm then return end
+        local hrp = GetHRP()
+        if not hrp then return end
+
+        local targetCF = getgenv().Nully.HoverTargetCF
+        if not targetCF then return end
+
+        -- smooth lerp
+        local alpha = math.clamp(dt * 14, 0, 1)   -- higher = snappier, still smooth
+        hrp.CFrame = hrp.CFrame:Lerp(targetCF, alpha)
+    end)
+end
+
+local function StopSmoothHover()
+    if hoverConn then
+        hoverConn:Disconnect()
+        hoverConn = nil
+    end
+    getgenv().Nully.HoverTargetCF = nil
 end
 
 -- ===================== COMBAT =====================
@@ -200,7 +234,7 @@ local function DoAttack(mob)
     if getgenv().Nully.FastAttack then
         for i = 1, 4 do
             Click()
-            task.wait(rand(0.02, 0.045))
+            task.wait(rand(0.018, 0.038))
         end
     else
         Click()
@@ -215,43 +249,33 @@ local function AttackAura()
         if IsValidMob(m) then
             if (m.HumanoidRootPart.Position - hrp.Position).Magnitude <= radius then
                 DoAttack(m)
-                if getgenv().Nully.Magnet then
-                    pcall(function()
-                        if isnetworkowner and isnetworkowner(m.HumanoidRootPart) then
-                            m.HumanoidRootPart.CFrame = CFrame.new(hrp.Position + Vector3.new(rand(-1.2,1.2), 0, rand(-1.2,1.2)))
-                        end
-                    end)
-                end
             end
         end
     end
 end
 
--- ===================== ONE-TIME KILL BUTTON =====================
+-- ===================== ONE-TIME =====================
 local function KillOneTimeSpecials()
     task.spawn(function()
         for _, m in pairs(workspace.Enemies:GetChildren()) do
             if IsOneTime(m) and not AlreadyKilled(m) and m:FindFirstChild("HumanoidRootPart") then
                 local hrp = GetHRP()
                 if not hrp then return end
-                SmoothTo(m.HumanoidRootPart.CFrame * CFrame.new(0, 12, 0))
-                task.wait(0.4)
-                for i = 1, 25 do
+                getgenv().Nully.HoverTargetCF = m.HumanoidRootPart.CFrame * CFrame.new(0, 14, 0)
+                task.wait(0.5)
+                for i = 1, 30 do
                     DoAttack(m)
-                    task.wait(0.08)
-                    if m.Humanoid.Health <= 0 then
-                        MarkKilled(m)
-                        break
-                    end
+                    task.wait(0.07)
+                    if m.Humanoid.Health <= 0 then break end
                 end
                 MarkKilled(m)
             end
         end
-        print("[Nully] One-time specials processed")
+        print("[Nully] One-time specials done")
     end)
 end
 
--- ===================== AUTO FARM (stable) =====================
+-- ===================== AUTO FARM =====================
 local CFrameMon
 local function CheckQuest()
     local lvl = (LocalPlayer.Data and LocalPlayer.Data.Level and LocalPlayer.Data.Level.Value) or 1
@@ -265,13 +289,10 @@ local function CheckQuest()
     end
 end
 
-local function GetFarmCF(target)
-    return target.CFrame * CFrame.new(0, getgenv().Nully.FarmHeight, 0) * CFrame.Angles(math.rad(-90), 0, 0)
-end
-
 local function AutoFarm()
+    StartSmoothHover()
     while getgenv().Nully.AutoFarm do
-        task.wait(rand(0.09, 0.16))
+        task.wait(rand(0.08, 0.14))
         pcall(function()
             local hrp = GetHRP()
             local hum = GetHum()
@@ -287,35 +308,30 @@ local function AutoFarm()
             end
 
             if closest then
-                local targetCF = GetFarmCF(closest.HumanoidRootPart)
-                if (hrp.Position - targetCF.Position).Magnitude > 7 then
-                    SmoothTo(targetCF)
-                else
-                    hrp.CFrame = targetCF
-                end
-                if getgenv().Nully.Magnet then
-                    for _, m in pairs(workspace.Enemies:GetChildren()) do
-                        if IsValidMob(m) and (m.HumanoidRootPart.Position - closest.HumanoidRootPart.Position).Magnitude < getgenv().Nully.MagnetRadius then
-                            pcall(function()
-                                if isnetworkowner and isnetworkowner(m.HumanoidRootPart) then
-                                    m.HumanoidRootPart.CFrame = CFrame.new(closest.HumanoidRootPart.Position + Vector3.new(rand(-1.5,1.5),0,rand(-1.5,1.5)))
-                                end
-                            end)
-                        end
-                    end
-                end
+                -- ideal hover position ABOVE the mob
+                local targetCF = closest.HumanoidRootPart.CFrame * CFrame.new(0, getgenv().Nully.FarmHeight, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+                getgenv().Nully.HoverTargetCF = targetCF
+                getgenv().Nully.CurrentTarget = closest
+
+                -- magnet under the player
+                MagnetUnder(hrp.Position)
+
                 if getgenv().Nully.AutoAttack then DoAttack(closest) end
-            elseif CFrameMon then
-                SmoothTo(CFrameMon * CFrame.new(0, 10, 0))
+            else
+                if CFrameMon then
+                    getgenv().Nully.HoverTargetCF = CFrameMon * CFrame.new(0, 12, 0)
+                end
+                getgenv().Nully.CurrentTarget = nil
             end
         end)
     end
+    StopSmoothHover()
 end
 
 -- ===================== AUTO BOUNTY =====================
 local function AutoBounty()
     while getgenv().Nully.AutoBounty do
-        task.wait(rand(0.18, 0.35))
+        task.wait(rand(0.15, 0.3))
         pcall(function()
             local hrp = GetHRP()
             if not hrp then return end
@@ -330,22 +346,23 @@ local function AutoBounty()
                 end
             end
             if closest then
-                local target = closest.Character.HumanoidRootPart
-                SmoothTo(target.CFrame * CFrame.new(0, 8, 4))
+                local t = closest.Character.HumanoidRootPart
+                getgenv().Nully.HoverTargetCF = t.CFrame * CFrame.new(0, 9, 3)
                 DoAttack(closest.Character)
             end
         end)
     end
 end
 
--- ===================== AUTO BOSS / ELITE / SEA =====================
+-- ===================== OTHER LOOPS =====================
 local function AutoBoss()
     while getgenv().Nully.AutoBoss do
-        task.wait(rand(0.22, 0.4))
+        task.wait(rand(0.2, 0.35))
         pcall(function()
             for _, m in pairs(workspace.Enemies:GetChildren()) do
                 if IsValidMob(m) and (string.find(m.Name, "Boss") or string.find(m.Name, "King") or string.find(m.Name, "Prince") or string.find(m.Name, "Dough")) then
-                    SmoothTo(GetFarmCF(m.HumanoidRootPart))
+                    getgenv().Nully.HoverTargetCF = m.HumanoidRootPart.CFrame * CFrame.new(0, getgenv().Nully.FarmHeight, 0)
+                    MagnetUnder(GetHRP().Position)
                     if getgenv().Nully.AutoAttack then DoAttack(m) end
                 end
             end
@@ -353,10 +370,9 @@ local function AutoBoss()
     end
 end
 
--- ===================== AUTO RAID =====================
 local function AutoRaid()
     while getgenv().Nully.AutoRaid do
-        task.wait(rand(1.0, 1.6))
+        task.wait(rand(1.1, 1.7))
         pcall(function()
             RS.Remotes.CommF_:InvokeServer("RaidsNpc", "Check")
             RS.Remotes.CommF_:InvokeServer("RaidsNpc", "Select", "Flame")
@@ -364,10 +380,9 @@ local function AutoRaid()
     end
 end
 
--- ===================== FRUIT + AUTO BUY =====================
 local function FruitNotifier()
     while getgenv().Nully.FruitNotifier do
-        task.wait(rand(1.4, 2.2))
+        task.wait(rand(1.3, 2.1))
         pcall(function()
             for _, v in pairs(workspace:GetChildren()) do
                 if v:IsA("Tool") and string.find(v.Name:lower(), "fruit") then
@@ -380,10 +395,9 @@ end
 
 local function AutoBuyFruit()
     while getgenv().Nully.AutoBuyFruit do
-        task.wait(rand(2.5, 4))
+        task.wait(rand(2.8, 4.2))
         pcall(function()
             RS.Remotes.CommF_:InvokeServer("PurchaseRawFruit", getgenv().Nully.SelectedFruit)
-            -- fallback common call
             RS.Remotes.CommF_:InvokeServer("BuyFruit", getgenv().Nully.SelectedFruit)
         end)
     end
@@ -401,40 +415,31 @@ end
 
 local function AutoSpin()
     while getgenv().Nully.AutoSpinFruit do
-        task.wait(rand(1.3, 2.1))
+        task.wait(rand(1.4, 2.2))
         pcall(function()
             RS.Remotes.CommF_:InvokeServer("Cousin", "Buy")
         end)
     end
 end
 
--- ===================== ISLAND AUTOMATION =====================
 local function AutoKitsune()
     while getgenv().Nully.AutoKitsune do
-        task.wait(rand(2, 3.5))
-        pcall(function()
-            -- common remote pattern for Kitsune
-            RS.Remotes.CommF_:InvokeServer("KitsuneIsland")
-            -- teleport / farm logic would go here
-        end)
+        task.wait(rand(2.2, 3.5))
+        pcall(function() RS.Remotes.CommF_:InvokeServer("KitsuneIsland") end)
     end
 end
 
 local function AutoPrehistoric()
     while getgenv().Nully.AutoPrehistoric do
-        task.wait(rand(2.2, 3.8))
-        pcall(function()
-            RS.Remotes.CommF_:InvokeServer("PrehistoricIsland")
-        end)
+        task.wait(rand(2.3, 3.8))
+        pcall(function() RS.Remotes.CommF_:InvokeServer("PrehistoricIsland") end)
     end
 end
 
 local function AutoMirage()
     while getgenv().Nully.AutoMirage do
         task.wait(rand(2.5, 4))
-        pcall(function()
-            RS.Remotes.CommF_:InvokeServer("MirageIsland")
-        end)
+        pcall(function() RS.Remotes.CommF_:InvokeServer("MirageIsland") end)
     end
 end
 
@@ -443,9 +448,7 @@ local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "NullyESP"
 ESPFolder.Parent = CoreGui
 
-local function ClearESP()
-    ESPFolder:ClearAllChildren()
-end
+local function ClearESP() ESPFolder:ClearAllChildren() end
 
 local function CreateESP(obj, text, color)
     local part = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj
@@ -508,10 +511,10 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- Aura heartbeat (throttled)
+-- Aura
 local lastAura = 0
 RunService.Heartbeat:Connect(function()
-    if tick() - lastAura < 0.08 then return end
+    if tick() - lastAura < 0.07 then return end
     lastAura = tick()
     if getgenv().Nully.AttackAura and getgenv().Nully.AutoAttack then
         AttackAura()
@@ -520,12 +523,10 @@ end)
 
 -- ESP loop
 task.spawn(function()
-    while task.wait(rand(1.1, 1.6)) do
+    while task.wait(rand(1.1, 1.5)) do
         if getgenv().Nully.ESP.Player or getgenv().Nully.ESP.Mob or getgenv().Nully.ESP.Boss or getgenv().Nully.ESP.Fruit then
             UpdateESP()
-        else
-            ClearESP()
-        end
+        else ClearESP() end
     end
 end)
 
@@ -537,32 +538,30 @@ if getgenv().Nully.AntiAFK then
     end)
 end
 
--- ===================== UI - BLACKHOLE THEME =====================
+-- ===================== UI =====================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "NullyHubUltimate"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = CoreGui
 
--- Blackhole watermark (top right)
+-- Blackhole watermark
 local Watermark = Instance.new("Frame")
-Watermark.Size = UDim2.new(0, 48, 0, 48)
-Watermark.Position = UDim2.new(1, -60, 0, 12)
+Watermark.Size = UDim2.new(0, 46, 0, 46)
+Watermark.Position = UDim2.new(1, -58, 0, 12)
 Watermark.BackgroundColor3 = Color3.fromRGB(5, 5, 12)
 Watermark.BorderSizePixel = 0
 Watermark.Parent = ScreenGui
 Instance.new("UICorner", Watermark).CornerRadius = UDim.new(1, 0)
-
 local WMStroke = Instance.new("UIStroke")
-WMStroke.Color = Color3.fromRGB(120, 40, 200)
+WMStroke.Color = Color3.fromRGB(130, 50, 220)
 WMStroke.Thickness = 2
 WMStroke.Parent = Watermark
-
 local WMLabel = Instance.new("TextLabel")
 WMLabel.Size = UDim2.new(1, 0, 1, 0)
 WMLabel.BackgroundTransparency = 1
 WMLabel.Text = "⚫"
-WMLabel.TextColor3 = Color3.fromRGB(180, 100, 255)
+WMLabel.TextColor3 = Color3.fromRGB(190, 120, 255)
 WMLabel.Font = Enum.Font.GothamBold
 WMLabel.TextSize = 22
 WMLabel.Parent = Watermark
@@ -570,55 +569,51 @@ WMLabel.Parent = Watermark
 -- Main window
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 520, 0, 400)
-Main.Position = UDim2.new(0.5, -260, 0.5, -200)
-Main.BackgroundColor3 = Color3.fromRGB(12, 10, 18)
+Main.Size = UDim2.new(0, 530, 0, 420)
+Main.Position = UDim2.new(0.5, -265, 0.5, -210)
+Main.BackgroundColor3 = Color3.fromRGB(11, 9, 17)
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Parent = ScreenGui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
-
 local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(90, 30, 160)
-MainStroke.Thickness = 1.6
+MainStroke.Color = Color3.fromRGB(95, 35, 170)
+MainStroke.Thickness = 1.5
 MainStroke.Parent = Main
 
 -- Moving blackhole background
 local BH = Instance.new("Frame")
-BH.Size = UDim2.new(2, 0, 2, 0)
-BH.Position = UDim2.new(-0.5, 0, -0.5, 0)
+BH.Size = UDim2.new(2.2, 0, 2.2, 0)
+BH.Position = UDim2.new(-0.6, 0, -0.6, 0)
 BH.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-BH.BackgroundTransparency = 0.55
+BH.BackgroundTransparency = 0.5
 BH.BorderSizePixel = 0
 BH.ZIndex = 0
 BH.Parent = Main
 Instance.new("UICorner", BH).CornerRadius = UDim.new(1, 0)
-
 local BHGradient = Instance.new("UIGradient")
 BHGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(5, 0, 15)),
-    ColorSequenceKeypoint.new(0.4, Color3.fromRGB(40, 10, 80)),
-    ColorSequenceKeypoint.new(0.7, Color3.fromRGB(10, 5, 25)),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(8, 0, 20)),
+    ColorSequenceKeypoint.new(0.35, Color3.fromRGB(55, 15, 100)),
+    ColorSequenceKeypoint.new(0.7, Color3.fromRGB(15, 5, 35)),
     ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
 })
-BHGradient.Rotation = 0
 BHGradient.Parent = BH
 
--- Animate blackhole
 task.spawn(function()
     local rot = 0
     while BH and BH.Parent do
-        rot = rot + 0.6
+        rot = rot + 0.55
         BHGradient.Rotation = rot
-        BH.Position = UDim2.new(-0.5 + math.sin(tick()*0.3)*0.08, 0, -0.5 + math.cos(tick()*0.25)*0.06, 0)
+        BH.Position = UDim2.new(-0.6 + math.sin(tick()*0.28)*0.09, 0, -0.6 + math.cos(tick()*0.22)*0.07, 0)
         task.wait(0.03)
     end
 end)
 
--- Title bar
+-- Title
 local TitleBar = Instance.new("Frame")
 TitleBar.Size = UDim2.new(1, 0, 0, 38)
-TitleBar.BackgroundColor3 = Color3.fromRGB(22, 16, 35)
+TitleBar.BackgroundColor3 = Color3.fromRGB(20, 14, 32)
 TitleBar.BorderSizePixel = 0
 TitleBar.ZIndex = 2
 TitleBar.Parent = Main
@@ -629,7 +624,7 @@ Title.Size = UDim2.new(1, -90, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "⚫  NullyHub Ultimate  |  Blackhole"
-Title.TextColor3 = Color3.fromRGB(200, 160, 255)
+Title.TextColor3 = Color3.fromRGB(205, 170, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15
 Title.TextXAlignment = Enum.TextXAlignment.Left
@@ -649,25 +644,26 @@ CloseBtn.Parent = TitleBar
 CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
     getgenv().NullyLoaded = false
+    StopSmoothHover()
 end)
 
--- Sidebar
+-- Sidebar + Content
 local Side = Instance.new("Frame")
-Side.Size = UDim2.new(0, 118, 1, -38)
+Side.Size = UDim2.new(0, 120, 1, -38)
 Side.Position = UDim2.new(0, 0, 0, 38)
-Side.BackgroundColor3 = Color3.fromRGB(16, 12, 26)
+Side.BackgroundColor3 = Color3.fromRGB(15, 11, 25)
 Side.BorderSizePixel = 0
 Side.ZIndex = 2
 Side.Parent = Main
 
 local Content = Instance.new("ScrollingFrame")
 Content.Name = "Content"
-Content.Size = UDim2.new(1, -118, 1, -38)
-Content.Position = UDim2.new(0, 118, 0, 38)
+Content.Size = UDim2.new(1, -120, 1, -38)
+Content.Position = UDim2.new(0, 120, 0, 38)
 Content.BackgroundTransparency = 1
 Content.BorderSizePixel = 0
 Content.ScrollBarThickness = 4
-Content.CanvasSize = UDim2.new(0, 0, 0, 520)
+Content.CanvasSize = UDim2.new(0, 0, 0, 600)
 Content.ZIndex = 2
 Content.Parent = Main
 
@@ -679,20 +675,19 @@ local function MakeToggle(parent, name, default, y, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.94, 0, 0, 28)
     btn.Position = UDim2.new(0.03, 0, 0, y)
-    btn.BackgroundColor3 = default and Color3.fromRGB(65, 30, 120) or Color3.fromRGB(28, 22, 40)
+    btn.BackgroundColor3 = default and Color3.fromRGB(70, 32, 130) or Color3.fromRGB(26, 20, 40)
     btn.Text = "  " .. name .. (default and "  [ON]" or "  [OFF]")
-    btn.TextColor3 = Color3.fromRGB(225, 210, 255)
+    btn.TextColor3 = Color3.fromRGB(230, 215, 255)
     btn.Font = Enum.Font.Gotham
     btn.TextSize = 13
     btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.ZIndex = 3
     btn.Parent = parent
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
     local state = default
     btn.MouseButton1Click:Connect(function()
         state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(65, 30, 120) or Color3.fromRGB(28, 22, 40)
+        btn.BackgroundColor3 = state and Color3.fromRGB(70, 32, 130) or Color3.fromRGB(26, 20, 40)
         btn.Text = "  " .. name .. (state and "  [ON]" or "  [OFF]")
         callback(state)
     end)
@@ -704,7 +699,7 @@ local function MakeLabel(parent, text, y)
     l.Position = UDim2.new(0.03, 0, 0, y)
     l.BackgroundTransparency = 1
     l.Text = text
-    l.TextColor3 = Color3.fromRGB(150, 130, 200)
+    l.TextColor3 = Color3.fromRGB(155, 135, 205)
     l.Font = Enum.Font.GothamBold
     l.TextSize = 12
     l.TextXAlignment = Enum.TextXAlignment.Left
@@ -717,7 +712,7 @@ local function MakeDropdown(parent, name, options, default, y, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.94, 0, 0, 28)
     btn.Position = UDim2.new(0.03, 0, 0, y)
-    btn.BackgroundColor3 = Color3.fromRGB(32, 26, 48)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 24, 48)
     btn.Text = "  " .. name .. ": " .. current
     btn.TextColor3 = Color3.fromRGB(220, 205, 255)
     btn.Font = Enum.Font.Gotham
@@ -726,7 +721,6 @@ local function MakeDropdown(parent, name, options, default, y, callback)
     btn.ZIndex = 3
     btn.Parent = parent
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
     local idx = 1
     for i, v in ipairs(options) do if v == default then idx = i break end end
     btn.MouseButton1Click:Connect(function()
@@ -741,9 +735,9 @@ local function MakeButton(parent, name, y, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.94, 0, 0, 30)
     btn.Position = UDim2.new(0.03, 0, 0, y)
-    btn.BackgroundColor3 = Color3.fromRGB(50, 20, 90)
+    btn.BackgroundColor3 = Color3.fromRGB(55, 22, 100)
     btn.Text = "  " .. name
-    btn.TextColor3 = Color3.fromRGB(230, 210, 255)
+    btn.TextColor3 = Color3.fromRGB(235, 215, 255)
     btn.Font = Enum.Font.GothamBold
     btn.TextSize = 13
     btn.TextXAlignment = Enum.TextXAlignment.Left
@@ -753,66 +747,70 @@ local function MakeButton(parent, name, y, callback)
     btn.MouseButton1Click:Connect(callback)
 end
 
-local tabs = {"Main", "Farm", "Combat", "Bounty", "Buy", "Events", "ESP", "Misc"}
+local tabs = {"Main", "Farm", "Fruit", "Combat", "Bounty", "Events", "ESP", "Misc"}
 local function SwitchTab(tab)
     ClearContent()
-    Content.CanvasSize = UDim2.new(0, 0, 0, 560)
+    Content.CanvasSize = UDim2.new(0, 0, 0, 620)
 
     if tab == "Main" then
-        MakeLabel(Content, "CORE FARM", 6)
+        MakeLabel(Content, "CORE", 6)
         MakeToggle(Content, "Auto Farm", getgenv().Nully.AutoFarm, 28, function(v)
             getgenv().Nully.AutoFarm = v
-            if v then task.spawn(AutoFarm) end
+            if v then task.spawn(AutoFarm) else StopSmoothHover() end
         end)
         MakeToggle(Content, "Auto Quest", getgenv().Nully.AutoQuest, 62, function(v) getgenv().Nully.AutoQuest = v end)
         MakeToggle(Content, "Auto Boss", getgenv().Nully.AutoBoss, 96, function(v)
             getgenv().Nully.AutoBoss = v
             if v then task.spawn(AutoBoss) end
         end)
-        MakeToggle(Content, "Magnet / Bring", getgenv().Nully.Magnet, 130, function(v) getgenv().Nully.Magnet = v end)
+        MakeToggle(Content, "Magnet (Under You)", getgenv().Nully.Magnet, 130, function(v) getgenv().Nully.Magnet = v end)
         MakeToggle(Content, "NoClip", getgenv().Nully.NoClip, 164, function(v) getgenv().Nully.NoClip = v end)
         MakeButton(Content, "Kill One-Time Specials (Prison etc)", 210, KillOneTimeSpecials)
 
     elseif tab == "Farm" then
-        MakeLabel(Content, "FARM OPTIONS", 6)
+        MakeLabel(Content, "FARM SETTINGS (Redz style)", 6)
         MakeToggle(Content, "Ignore Unkillable", getgenv().Nully.IgnoreUnkillable, 28, function(v) getgenv().Nully.IgnoreUnkillable = v end)
-        MakeToggle(Content, "One-Time Killables Mode", getgenv().Nully.OneTimeKillables, 62, function(v) getgenv().Nully.OneTimeKillables = v end)
+        MakeLabel(Content, "Farm Height: " .. getgenv().Nully.FarmHeight .. " | Magnet Under: " .. getgenv().Nully.MagnetUnderOffset, 70)
+
+    elseif tab == "Fruit" then
+        MakeLabel(Content, "FRUIT (Redz style)", 6)
+        MakeToggle(Content, "Fruit Notifier", getgenv().Nully.FruitNotifier, 28, function(v)
+            getgenv().Nully.FruitNotifier = v
+            if v then task.spawn(FruitNotifier) end
+        end)
+        MakeToggle(Content, "Auto Buy Fruit", getgenv().Nully.AutoBuyFruit, 62, function(v)
+            getgenv().Nully.AutoBuyFruit = v
+            if v then task.spawn(AutoBuyFruit) end
+        end)
+        MakeDropdown(Content, "Fruit", {"Flame","Ice","Light","Dark","Magma","Quake","Buddha","String","Bird: Phoenix","Rumble","Paw","Gravity","Dough","Shadow","Venom","Control","Spirit","Dragon","Leopard"}, getgenv().Nully.SelectedFruit, 102, function(v)
+            getgenv().Nully.SelectedFruit = v
+        end)
+        MakeToggle(Content, "Auto Spin Fruit", getgenv().Nully.AutoSpinFruit, 144, function(v)
+            getgenv().Nully.AutoSpinFruit = v
+            if v then task.spawn(AutoSpin) end
+        end)
+        MakeToggle(Content, "Auto Buy Style", getgenv().Nully.AutoBuyStyle, 178, function(v)
+            getgenv().Nully.AutoBuyStyle = v
+            if v then task.spawn(AutoBuyStyle) end
+        end)
+        MakeDropdown(Content, "Style", {"Electric","Water","Dragon","Dark","Light","Flame"}, getgenv().Nully.SelectedStyle, 218, function(v)
+            getgenv().Nully.SelectedStyle = v
+        end)
 
     elseif tab == "Combat" then
         MakeLabel(Content, "COMBAT / AURA", 6)
         MakeToggle(Content, "Auto Attack", getgenv().Nully.AutoAttack, 28, function(v) getgenv().Nully.AutoAttack = v end)
         MakeToggle(Content, "Attack Aura", getgenv().Nully.AttackAura, 62, function(v) getgenv().Nully.AttackAura = v end)
         MakeToggle(Content, "Fast Attack", getgenv().Nully.FastAttack, 96, function(v) getgenv().Nully.FastAttack = v end)
-        MakeDropdown(Content, "Weapon", {"Melee", "Sword", "Fruit", "Gun"}, getgenv().Nully.SelectWeapon, 136, function(v)
+        MakeDropdown(Content, "Weapon", {"Melee","Sword","Fruit","Gun"}, getgenv().Nully.SelectWeapon, 136, function(v)
             getgenv().Nully.SelectWeapon = v
         end)
 
     elseif tab == "Bounty" then
-        MakeLabel(Content, "AUTO BOUNTY (PvP)", 6)
+        MakeLabel(Content, "AUTO BOUNTY", 6)
         MakeToggle(Content, "Auto Bounty", getgenv().Nully.AutoBounty, 28, function(v)
             getgenv().Nully.AutoBounty = v
             if v then task.spawn(AutoBounty) end
-        end)
-
-    elseif tab == "Buy" then
-        MakeLabel(Content, "AUTO BUY", 6)
-        MakeToggle(Content, "Auto Buy Fruit", getgenv().Nully.AutoBuyFruit, 28, function(v)
-            getgenv().Nully.AutoBuyFruit = v
-            if v then task.spawn(AutoBuyFruit) end
-        end)
-        MakeDropdown(Content, "Fruit", {"Flame", "Ice", "Light", "Dark", "Magma", "Quake", "Buddha", "String", "Bird: Phoenix", "Rumble", "Paw", "Gravity", "Dough", "Shadow", "Venom", "Control", "Spirit", "Dragon", "Leopard"}, getgenv().Nully.SelectedFruit, 68, function(v)
-            getgenv().Nully.SelectedFruit = v
-        end)
-        MakeToggle(Content, "Auto Buy Style / Haki", getgenv().Nully.AutoBuyStyle, 110, function(v)
-            getgenv().Nully.AutoBuyStyle = v
-            if v then task.spawn(AutoBuyStyle) end
-        end)
-        MakeDropdown(Content, "Style", {"Electric", "Water", "Dragon", "Dark", "Light", "Flame"}, getgenv().Nully.SelectedStyle, 150, function(v)
-            getgenv().Nully.SelectedStyle = v
-        end)
-        MakeToggle(Content, "Auto Spin Fruit", getgenv().Nully.AutoSpinFruit, 192, function(v)
-            getgenv().Nully.AutoSpinFruit = v
-            if v then task.spawn(AutoSpin) end
         end)
 
     elseif tab == "Events" then
@@ -825,17 +823,13 @@ local function SwitchTab(tab)
             getgenv().Nully.AutoKitsune = v
             if v then task.spawn(AutoKitsune) end
         end)
-        MakeToggle(Content, "Auto Prehistoric Island", getgenv().Nully.AutoPrehistoric, 96, function(v)
+        MakeToggle(Content, "Auto Prehistoric", getgenv().Nully.AutoPrehistoric, 96, function(v)
             getgenv().Nully.AutoPrehistoric = v
             if v then task.spawn(AutoPrehistoric) end
         end)
-        MakeToggle(Content, "Auto Mirage Island", getgenv().Nully.AutoMirage, 130, function(v)
+        MakeToggle(Content, "Auto Mirage", getgenv().Nully.AutoMirage, 130, function(v)
             getgenv().Nully.AutoMirage = v
             if v then task.spawn(AutoMirage) end
-        end)
-        MakeToggle(Content, "Fruit Notifier", getgenv().Nully.FruitNotifier, 164, function(v)
-            getgenv().Nully.FruitNotifier = v
-            if v then task.spawn(FruitNotifier) end
         end)
 
     elseif tab == "ESP" then
@@ -848,15 +842,15 @@ local function SwitchTab(tab)
     elseif tab == "Misc" then
         MakeLabel(Content, "MISC", 6)
         MakeToggle(Content, "Anti AFK", getgenv().Nully.AntiAFK, 28, function(v) getgenv().Nully.AntiAFK = v end)
+        MakeLabel(Content, "LeftShift = Toggle UI", 70)
     end
 end
 
--- Side buttons
 for i, name in ipairs(tabs) do
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(1, -10, 0, 30)
     b.Position = UDim2.new(0, 5, 0, 8 + (i-1)*34)
-    b.BackgroundColor3 = Color3.fromRGB(28, 20, 45)
+    b.BackgroundColor3 = Color3.fromRGB(26, 18, 42)
     b.Text = name
     b.TextColor3 = Color3.fromRGB(200, 175, 255)
     b.Font = Enum.Font.Gotham
@@ -886,7 +880,14 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-SwitchTab("Main")
-print("[NullyHub Ultimate v3.0] Blackhole loaded | Full Redz set + one-time + Auto Buy + Bounty")
+-- LeftShift toggle UI
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.LeftShift then
+        Main.Visible = not Main.Visible
+        Watermark.Visible = Main.Visible
+    end
+end)
 
-print("[Nully] Full script loaded | Click the title for NSFW mode")
+SwitchTab("Main")
+print("[NullyHub Ultimate v3.1] Loaded | Smooth hover + Under magnet + LeftShift toggle")
